@@ -1,0 +1,28 @@
+<html>
+    <head>
+        <link rel="stylesheet" href="/static/css/app.css">
+    </head>
+    <body>
+        <div id="main">
+            <div id="loadingbar" style="display: none;">
+                <div class="loading-bar"></div>
+                <div id="loading"></div>
+            </div>
+
+            <div id="linescontainer"><div id="lines">
+            </div></div>
+
+            <div id="bottombar">
+                <div id="chatinputcontainer">
+                    <form onsubmit="return submitText();">
+                        <span id="chatinput" class="textarea" contenteditable onkeypress = "if (event.key === 'Enter' && event.shiftKey !== true) { event.preventDefault(); submitText(); }"></span>
+                        <button type="submit"><svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 mr-1" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
+                        <br/>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <script src="/static/js/app.js"></script>
+    </body>
+</html>

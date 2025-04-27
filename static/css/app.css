@@ -1,0 +1,152 @@
+body {
+    background-color: rgba( 247, 247, 248 );
+    font-family: sans-serif;
+    margin: 0px;
+    background-image: url( /static/img/bg3.jpg );
+}
+
+#main #chatinputcontainer {
+    margin: 15px;
+    padding: 0.75rem;
+    padding-left: 1rem;
+    border: rgba( 0, 0, 0, 0.1 ) 1px solid;
+    border-radius: 2px;
+    box-shadow: 0 0 4px 1px rgba(143,143,143,.8);
+    background-color: #fff;
+}
+
+#main #chatinputcontainer form {
+    margin: 0px;
+    }
+
+#main #chatinputcontainer .textarea {
+    max-height: 200px;
+    min-height: 36px;
+    overflow-y: hidden;
+    border-width: 0px;
+    width: calc( 100% - 75px );
+    display: block;
+    float: left;
+    background-color: rgba( 0, 0, 0, 0 );
+    padding: 5px;
+    color: rgba( 0, 0, 0, 0.8 );
+}
+
+#main #chatinputcontainer br {
+    clear: both;
+    height: 1px;
+    overflow: hidden;
+}
+
+#main #chatinputcontainer button {
+    vertical-align: top;
+    padding: 0px;
+    padding-top: 3px;
+    width: 48px;
+    border: 0px;
+    color: rgba(0,0,0,0.5);
+    float: right;
+    background-color: rgba(0,0,0,0);
+}
+
+#main #chatinputcontainer svg {
+    width: 24px;
+    height: 24px;
+}
+
+#main #linescontainer {
+    overflow-y: scroll;
+    height: calc( 100% - 110px );
+}
+
+#main #lines {
+    margin: 0px 15px;
+    padding-top: 10px;
+}
+#main #lines .line {
+    max-width: 90%;
+    clear: both;
+    float: left;
+    margin: 5px 0px;
+    padding: 10px 15px;
+    border-radius: 5px;
+    box-shadow: 0 0 4px 1px rgba(143,143,143,.8);
+    color: rba( 55, 65 , 81 );
+    font-size: 14px;
+    border: solid 1px rgb(117, 153, 111);
+    background-color: rgb(217, 253, 211);
+}
+
+#main #lines .line.server {
+    float: right;
+    background-color: #fff;
+    border: rgba( 0, 0, 0, 0.1 ) 1px solid;
+}
+
+/* loading-bar */
+#loading {
+    position: fixed;
+    top: 0px;
+    left: 0px;
+    width: 100%;
+    height: 100%;
+    opacity: 0.25;
+    background-color: #fff;
+    z-index: 998;
+}
+
+.loading-bar {
+	display: block;
+	-webkit-animation: shift-rightwards 1s ease-in-out infinite;
+	-moz-animation: shift-rightwards 1s ease-in-out infinite;
+	    -ms-animation: shift-rightwards 1s ease-in-out infinite;
+	    -o-animation: shift-rightwards 1s ease-in-out infinite;
+	    animation: shift-rightwards 1s ease-in-out infinite;
+	    -webkit-animation-delay: .0s;
+	    -moz-animation-delay: .0s;
+	    -o-animation-delay: .0s;
+	    animation-delay: .0s;
+
+	    position: fixed;
+	    top: 0;
+	    left: 0;
+	    right: 0;
+	    height: 4px;
+	    z-index: 999;
+	    background: rgb( 32, 33, 35  );
+	    -webkit-transform: translateX(100%);
+	    -moz-transform: translateX(100%);
+	    -o-transform: translateX(100%);
+	    transform: translateX(100%);
+}
+
+@-webkit-keyframes shift-rightwards {
+    0% {
+        -webkit-transform:translateX(-100%);
+        -moz-transform:translateX(-100%);
+        -o-transform:translateX(-100%);
+        transform:translateX(-100%);
+    }
+
+    40% {
+        -webkit-transform:translateX(0%);
+        -moz-transform:translateX(0%);
+        -o-transform:translateX(0%);
+        transform:translateX(0%);
+    }
+
+    60% {
+        -webkit-transform:translateX(0%);
+        -moz-transform:translateX(0%);
+        -o-transform:translateX(0%);
+        transform:translateX(0%);
+    }
+
+    100% {
+        -webkit-transform:translateX(100%);
+        -moz-transform:translateX(100%);
+        -o-transform:translateX(100%);
+        transform:translateX(100%);
+    }
+
+}

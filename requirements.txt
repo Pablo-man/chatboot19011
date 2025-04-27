@@ -1,0 +1,6 @@
+fastapi>=0.85.1
+uvicorn>=0.18.0
+websockets==11.0.3
+openai===1.55.3
+chromadb===0.5.23
+duckdb===1.1.3
