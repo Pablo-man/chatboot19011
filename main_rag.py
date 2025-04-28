@@ -6,6 +6,7 @@ from websockets.exceptions import ConnectionClosed
 
 import chromadb
 import json
+import fitz
 import uvicorn
 
 ENDPOINT = "http://127.0.0.1:39281/v1"
@@ -13,26 +14,35 @@ ENDPOINT = "http://127.0.0.1:39281/v1"
 #MODEL = "deepseek-r1-distill-qwen-14b:14b-gguf-q4-km"
 MODEL = "llama3.2:3b"
 
-client = chromadb.Client()
+####
+def load_pdf_content(file_path):
+    doc = fitz.open(file_path)
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    return text
 
+####
+client = chromadb.Client()
+####
 collection = client.create_collection("all-my-documents")
 
+# --- NUEVO: Cargar el PDF ---
+pdf_text = load_pdf_content("iso19011.pdf")  # o la ruta que prefieras
+
+# Puedes dividir el texto en partes si es muy largo
+chunks = [pdf_text[i:i+500] for i in range(0, len(pdf_text), 1000)]
+
+# Ahora lo agregas al collection
 collection.add(
-    documents=[
-        "La empresa Lostsys se dedica a ofrecer servícios y productos a empresas sobre informática corporativa como software de gestión, CRMs, ERPs, portales corporativos, eCommerce, formación, DevOps, etc.",
-        "En Lostsys podemos ayudarte ha mejorar tus procesos de CI/CD con nuestros productos y servícios de DevOps.",
-        "En Lostsys podemos ayudarte a digitalizarte con nuestros servícios de desarrollo de aplicaciones corporativas.",
-        "En Lostsys te podemos entrenar y formar a múltiples áreas de la informática corporativa como desarrollo, Data, IA o DevOps.",
-        "En Lostsys te podemos desarrollar una tienda online para vender por todo el mundo y mas allà.",
-        "En Lostsys te podemos desarrollar un eCommerce para vender por todo el mundo y mas allà",
-    ],
-    ids=["id1", "id2","id3", "id4","id5", "id6"]
+    documents=chunks,
+    ids=[f"id{i}" for i in range(len(chunks))]
 )
+####
 
 system_prompt = """
-Eres un asistente de la empresa Lostsys que ayuda a sus clientes a encontrar el servicio o producto que les interesa. Sigue estas instrucciones:
-- Ofrece respuestas cortas y concisas de no mas de 25 palabras. 
-- No ofrezcas consejos, productos o servícios de terceros.
+Eres un especialista en la normativa ISO19011, te encargas de dar solucion a distintos casos utilizando esta metodologia. Sigue estas instrucciones:
+- Ofrece respuestas cortas y concisas de no mas de 25 palabras.
 - Explica al cliente cosas relacionadas con en la siguiente lista JSON: """
 
 
