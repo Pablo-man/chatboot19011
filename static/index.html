@@ -1,5 +1,6 @@
 <html>
     <head>
+        <title>ISO 19011 - Asistente de Auditoría</title>
         <link rel="stylesheet" href="/static/css/app.css">
     </head>
     <body>
@@ -9,16 +10,51 @@
                 <div id="loading"></div>
             </div>
 
-            <div id="linescontainer"><div id="lines">
-            </div></div>
+            <div class="header">
+                <h1>Asistente ISO 19011</h1>
+                <div class="mode-selector">
+                    <button onclick="switchToCaseMode()" class="mode-btn active" id="caseModeBtn">Modo Comparativo</button>
+                    <button onclick="switchToNormalMode()" class="mode-btn" id="normalModeBtn">Modo Chat</button>
+                </div>
+            </div>
+
+            <div id="linescontainer">
+                <div id="lines">
+                    <div class="line system-message">
+                        Bienvenido al asistente ISO 19011. Por favor, introduce un caso de estudio para comenzar.
+                    </div>
+                </div>
+            </div>
 
             <div id="bottombar">
-                <div id="chatinputcontainer">
-                    <form onsubmit="return submitText();">
-                        <span id="chatinput" class="textarea" contenteditable onkeypress = "if (event.key === 'Enter' && event.shiftKey !== true) { event.preventDefault(); submitText(); }"></span>
-                        <button type="submit"><svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 mr-1" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
-                        <br/>
-                    </form>
+                <!-- Panel para ingresar caso de estudio -->
+                <div id="caseInputPanel" class="input-panel">
+                    <h3>Introduce un Caso de Estudio</h3>
+                    <textarea id="caseInputText" placeholder="Describe el caso de estudio relacionado con ISO 19011..."></textarea>
+                    <button onclick="submitCase()" class="submit-btn">Enviar Caso</button>
+                </div>
+
+                <!-- Panel para ingresar respuesta del usuario -->
+                <div id="userResponsePanel" class="input-panel" style="display: none;">
+                    <h3>Tu Respuesta</h3>
+                    <textarea id="userResponseText" placeholder="Proporciona tu respuesta al caso..."></textarea>
+                    <button onclick="submitUserResponse()" class="submit-btn">Enviar Mi Respuesta</button>
+                </div>
+
+                <!-- Panel chat normal (original) -->
+                <div id="normalChatPanel" class="input-panel" style="display: none;">
+                    <div id="chatinputcontainer">
+                        <form onsubmit="return submitText();">
+                            <span id="chatinput" class="textarea" contenteditable onkeypress="if (event.key === 'Enter' && event.shiftKey !== true) { event.preventDefault(); submitText(); }"></span>
+                            <button type="submit">
+                                <svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 mr-1" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg">
+                                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                                </svg>
+                            </button>
+                            <br/>
+                        </form>
+                    </div>
                 </div>
             </div>
         </div>
