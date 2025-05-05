@@ -1,41 +1,98 @@
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from openai import AsyncOpenAI
 from websockets.exceptions import ConnectionClosed
 
-import chromadb
+import os
 import json
-import fitz
 import uvicorn
+import fitz  # PyMuPDF
+from dotenv import load_dotenv
 
-ENDPOINT = "http://127.0.0.1:39281/v1"
-MODEL = "llama3.2:3b"
+import os
+
+load_dotenv()
+
+GEMINI_API_KEY= os.getenv("GEMINI_API_KEY")
+
+# LangChain and ChromaDB imports
+from langchain_chroma import Chroma
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.embeddings.sentence_transformer import SentenceTransformerEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+import chromadb
+from chromadb.config import Settings
+
+# Gemini integration
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+# Set up environment variables (you can also use .env file with python-dotenv)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", GEMINI_API_KEY)
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
+COLLECTION_NAME = "iso19011-collection"
+PDF_PATH = "iso19011.pdf"
+
+# Initialize FastAPI app
+app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Initialize embeddings
+embedding_function = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+
+# Initialize ChromaDB
+chroma_client = chromadb.Client()
+
+# Initialize LLM
+llm = ChatGoogleGenerativeAI(
+    model=GEMINI_MODEL,
+    google_api_key=GEMINI_API_KEY,
+    temperature=0.6,
+    top_p=0.9
+)
 
 def load_pdf_content(file_path):
+    """Load and return raw text from PDF"""
     doc = fitz.open(file_path)
     text = ""
     for page in doc:
         text += page.get_text()
     return text
 
-client = chromadb.Client()
-try:
-    collection = client.get_collection("all-my-documents")
-    print("Colección existente cargada")
-except:
-    collection = client.create_collection("all-my-documents")
-    print("Nueva colección creada")
-    # Cargar el PDF
-    pdf_text = load_pdf_content("iso19011.pdf")
-    # Dividir el texto en partes
-    chunks = [pdf_text[i:i+500] for i in range(0, len(pdf_text), 1000)]
-    # Agregar al collection
-    collection.add(
-        documents=chunks,
-        ids=[f"id{i}" for i in range(len(chunks))]
-    )
+def setup_vector_store():
+    """Initialize or load existing vector store with document chunks"""
+    try:
+        # Try to get existing collection
+        db = Chroma(
+            client=chroma_client,
+            collection_name=COLLECTION_NAME,
+            embedding_function=embedding_function
+        )
+        print(f"Existing collection '{COLLECTION_NAME}' loaded")
+        return db
+    except:
+        print(f"Creating new collection '{COLLECTION_NAME}'")
+        # Load PDF document
+        loader = PyPDFLoader(PDF_PATH)
+        documents = loader.load()
 
+        # Split text into chunks
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        chunks = text_splitter.split_documents(documents)
+
+        # Create new vector store
+        db = Chroma.from_documents(
+            documents=chunks,
+            embedding=embedding_function,
+            collection_name=COLLECTION_NAME,
+            client=chroma_client
+        )
+        print(f"Added {len(chunks)} chunks to ChromaDB")
+        return db
+
+# Setup vector store
+vector_store = setup_vector_store()
+
+# Define system prompts
 system_prompt = """
 Eres un especialista en la normativa ISO19011, te encargas de dar solución a distintos casos utilizando esta metodología. 
 
@@ -67,71 +124,62 @@ Por favor, realiza un análisis comparativo siguiendo estos puntos:
 Mantén un tono constructivo y educativo, centrándote en el aprendizaje.
 """
 
-client = AsyncOpenAI(
-    base_url=ENDPOINT,
-    api_key="not-needed"
-)
-
-app = FastAPI()
-
-app.mount("/static", StaticFiles(directory="static"), name="static")
- 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     return RedirectResponse("/static/index.html")
 
 @app.websocket("/init")
 async def init(websocket: WebSocket):
-    print("Aceptando nueva conexión WebSocket...")
+    print("Accepting new WebSocket connection...")
     await websocket.accept()
-    print("Conexión WebSocket aceptada")
+    print("WebSocket connection accepted")
     
-    # Para guardar las respuestas del AI
+    # For storing AI responses
     stored_ai_responses = {}
     current_case_id = None
     
     try:
-        print("Esperando mensaje JSON del cliente...")
+        print("Waiting for JSON message from client...")
         while True:
             data = await websocket.receive_json()
-            print(f"Mensaje recibido: {json.dumps(data)}")
+            print(f"Message received: {json.dumps(data)}")
             
-            # Identificar el tipo de acción
+            # Identify action type
             action = data.get("action", "message")
             
             if action == "new_case":
-                # Nuevo caso de estudio
+                # New case study
                 case_text = data.get("content", "")
                 case_id = data.get("case_id", "default")
                 current_case_id = case_id
                 
-                # Generamos la respuesta pero no la enviamos
+                # Generate response but don't send it
                 ai_response = await generate_ai_response(case_text)
                 stored_ai_responses[case_id] = ai_response
                 
-                # Informar que el caso fue procesado
+                # Inform that the case was processed
                 await websocket.send_json({
                     "action": "case_processed",
                     "case_id": case_id
                 })
                 
             elif action == "submit_user_response":
-                # Usuario envía su respuesta
+                # User submits their response
                 case_id = data.get("case_id", "default")
                 user_response = data.get("content", "")
                 
                 if case_id in stored_ai_responses:
-                    # Recuperamos la respuesta AI
+                    # Retrieve stored AI response
                     ai_response = stored_ai_responses[case_id]
                     
-                    # Enviar la respuesta AI guardada
+                    # Send stored AI response
                     await websocket.send_json({
                         "action": "ai_response",
                         "content": ai_response,
                         "case_id": case_id
                     })
                     
-                    # Generar y enviar comparación
+                    # Generate and send comparison
                     comparison = await generate_comparison(ai_response, user_response)
                     await websocket.send_json({
                         "action": "comparison",
@@ -141,103 +189,91 @@ async def init(websocket: WebSocket):
                 else:
                     await websocket.send_json({
                         "action": "error",
-                        "message": "No se encontró respuesta AI para este caso"
+                        "message": "No AI response found for this case"
                     })
             
             elif action == "message":
-                # Mensaje normal (para compatibilidad)
+                # Normal message (for compatibility)
                 messages = data
                 await websocket.send_json({"action": "init_system_response"})
                 response = await process_messages(messages, websocket)
                 await websocket.send_json({"action": "finish_system_response"})
                 
     except WebSocketDisconnect:
-        print("Desconexión normal de WebSocket")
+        print("Normal WebSocket disconnection")
     except ConnectionClosed as e:
-        print(f"Conexión cerrada con código: {e.code}, razón: {e.reason}")
+        print(f"Connection closed with code: {e.code}, reason: {e.reason}")
     except json.JSONDecodeError:
-        print("Error decodificando JSON del cliente")
-        await websocket.close(code=1003)  # Código de cierre: datos no aceptables
+        print("Error decoding JSON from client")
+        await websocket.close(code=1003)  # Close code: Unacceptable data
     except Exception as e:
-        print(f"Error inesperado: {str(e)}")
-        await websocket.close(code=1011)  # Error interno
+        print(f"Unexpected error: {str(e)}")
+        await websocket.close(code=1011)  # Internal error
     finally:
-        print("Conexión WebSocket finalizada")
+        print("WebSocket connection terminated")
 
 async def generate_ai_response(case_text):
-    """Genera respuesta AI pero no la envía al usuario"""
+    """Generate AI response but don't send it to the user"""
     
-    results = collection.query(
-        query_texts=[case_text], 
-        n_results=2 
-    )
+    # Query vector store for relevant information
+    docs = vector_store.similarity_search(case_text, k=2)
+    context = "\n\n".join([doc.page_content for doc in docs])
     
-    messages = [
-        {"role": "system", "content": system_prompt + str(results["documents"][0])},
+    # Create prompt
+    full_prompt = system_prompt + context
+    
+    # Generate response with Gemini
+    response = await llm.ainvoke([
+        {"role": "system", "content": full_prompt},
         {"role": "user", "content": case_text}
-    ]
+    ])
     
-    completion = await client.chat.completions.create(
-        top_p=0.9,
-        temperature=0.6,
-        model=MODEL,
-        messages=messages
-    )
-    
-    return completion.choices[0].message.content
+    return response.content
 
 async def generate_comparison(ai_response, user_response):
-    """Genera una comparación entre la respuesta AI y la del usuario"""
+    """Generate a comparison between the AI response and user response"""
     
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": comparison_prompt.format(
-            ai_response=ai_response, 
-            user_response=user_response
-        )}
-    ]
-    
-    completion = await client.chat.completions.create(
-        top_p=0.9,
-        temperature=0.6,
-        model=MODEL,
-        messages=messages
+    # Create comparison prompt
+    prompt_text = comparison_prompt.format(
+        ai_response=ai_response, 
+        user_response=user_response
     )
     
-    return completion.choices[0].message.content
+    # Generate comparison with Gemini
+    response = await llm.ainvoke([
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt_text}
+    ])
+    
+    return response.content
 
 async def process_messages(messages, websocket):
-    """Procesa mensajes en el modo normal (compatibilidad)"""
+    """Process messages in normal mode (compatibility)"""
     
-    results = collection.query(
-        query_texts=[messages[-1]["content"]], 
-        n_results=2 
-    )
-
-    pmsg = [{"role": "system", "content": system_prompt + str(results["documents"][0])}]
-    print(json.dumps(pmsg + messages, indent=4))
-    completion_payload = {
-        "messages": pmsg + messages
-    }
-
-    response = await client.chat.completions.create(
-        top_p=0.9,
-        temperature=0.6,
-        model=MODEL,
-        messages=completion_payload["messages"],
-        stream=True
-    )
-
-    respStr = ""
-    async for chunk in response:
-        if (not chunk.choices[0] or
-            not chunk.choices[0].delta or
-            not chunk.choices[0].delta.content):
-            continue
-
-        await websocket.send_json({"action": "append_system_response", "content": chunk.choices[0].delta.content})
-
-    return respStr
+    # Query vector store for relevant information
+    user_message = messages[-1]["content"]
+    docs = vector_store.similarity_search(user_message, k=2)
+    context = "\n\n".join([doc.page_content for doc in docs])
+    
+    # Create system message with context
+    system_message = {"role": "system", "content": system_prompt + context}
+    
+    # Print messages for debugging
+    print(json.dumps([system_message] + messages, indent=4))
+    
+    # Stream responses using Gemini (note: streaming implementation depends on specific SDK version)
+    # This is a simplified version that doesn't actually stream but simulates it with chunks
+    response = await llm.ainvoke([system_message] + messages)
+    
+    # Split response into chunks to simulate streaming
+    content = response.content
+    chunk_size = 20  # Characters per chunk
+    chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
+    
+    for chunk in chunks:
+        await websocket.send_json({"action": "append_system_response", "content": chunk})
+    
+    return content
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
