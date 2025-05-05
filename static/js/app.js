@@ -147,14 +147,14 @@ function processMessage(event) {
         // Mostrar la respuesta del AI
         lines.innerHTML += `<div class="line ai-response">
             <h3>Respuesta del Asistente:</h3>
-            <div>${rdata.content.replaceAll("\n", "<br/>")}</div>
+            <div>${marked.parse(rdata.content.replaceAll("\n", "<br/>"))}</div>
         </div>`;
     }
     else if (rdata.action == "comparison") {
         // Mostrar la comparación
         lines.innerHTML += `<div class="line comparison">
             <h3>Análisis Comparativo:</h3>
-            <div>${rdata.content.replaceAll("\n", "<br/>")}</div>
+            <div>${marked.parse(rdata.content.replaceAll("\n", "<br/>"))}</div>
         </div>`;
         
         // Mostrar botón para nuevo caso

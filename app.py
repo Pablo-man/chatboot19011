@@ -274,6 +274,3 @@ async def process_messages(messages, websocket):
         await websocket.send_json({"action": "append_system_response", "content": chunk})
     
     return content
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
