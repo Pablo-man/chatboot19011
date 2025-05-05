@@ -9,12 +9,13 @@ import json
 import uvicorn
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
-
-import os
+import gc  # For garbage collection
+from typing import Dict, Any
+import tempfile
 
 load_dotenv()
 
-GEMINI_API_KEY= os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # LangChain and ChromaDB imports
 from langchain_chroma import Chroma
@@ -27,11 +28,12 @@ from chromadb.config import Settings
 # Gemini integration
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-# Set up environment variables (you can also use .env file with python-dotenv)
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", GEMINI_API_KEY)
+# Constants
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
 COLLECTION_NAME = "iso19011-collection"
 PDF_PATH = "iso19011.pdf"
+PERSISTENCE_DIRECTORY = "./chroma_db"
+MAX_STORED_RESPONSES = 50  # Limit cached responses
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -39,35 +41,104 @@ app = FastAPI()
 # Configure CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Initialize embeddings
-embedding_function = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+# Create persistent directory for ChromaDB
+os.makedirs(PERSISTENCE_DIRECTORY, exist_ok=True)
 
-# Initialize ChromaDB
-chroma_client = chromadb.Client()
+# Initialize embeddings - load only when needed
+embedding_function = None
 
-# Initialize LLM
-llm = ChatGoogleGenerativeAI(
-    model=GEMINI_MODEL,
-    google_api_key=GEMINI_API_KEY,
-    temperature=0.6,
-    top_p=0.9
-)
+# Initialize ChromaDB client with persistence
+chroma_client = chromadb.PersistentClient(path=PERSISTENCE_DIRECTORY)
 
-def load_pdf_content(file_path):
-    """Load and return raw text from PDF"""
+# Initialize LLM as None, load only when needed
+llm = None
+
+# LRU cache for AI responses
+class LRUCache:
+    def __init__(self, capacity: int):
+        self.cache: Dict[str, str] = {}
+        self.capacity = capacity
+        self.order = []
+
+    def get(self, key: str) -> str:
+        if key in self.cache:
+            # Move to the end to show it was recently used
+            self.order.remove(key)
+            self.order.append(key)
+            return self.cache[key]
+        return None
+
+    def put(self, key: str, value: str) -> None:
+        if key in self.cache:
+            self.order.remove(key)
+        elif len(self.cache) >= self.capacity:
+            # Remove the least recently used item
+            oldest = self.order.pop(0)
+            del self.cache[oldest]
+        
+        self.cache[key] = value
+        self.order.append(key)
+
+# Initialize response cache
+response_cache = LRUCache(MAX_STORED_RESPONSES)
+
+def get_embedding_function():
+    """Lazy load embedding function"""
+    global embedding_function
+    if embedding_function is None:
+        embedding_function = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+    return embedding_function
+
+def get_llm():
+    """Lazy load LLM"""
+    global llm
+    if llm is None:
+        llm = ChatGoogleGenerativeAI(
+            model=GEMINI_MODEL,
+            google_api_key=GEMINI_API_KEY,
+            temperature=0.6,
+            top_p=0.9
+        )
+    return llm
+
+def chunk_pdf(file_path, chunk_size=1000, chunk_overlap=100):
+    """Process PDF in chunks to avoid loading entire content into memory"""
     doc = fitz.open(file_path)
-    text = ""
-    for page in doc:
-        text += page.get_text()
-    return text
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size, 
+        chunk_overlap=chunk_overlap
+    )
+    
+    all_chunks = []
+    # Process pages in batches to reduce memory usage
+    batch_size = 5
+    
+    for i in range(0, len(doc), batch_size):
+        batch_text = ""
+        for page_num in range(i, min(i + batch_size, len(doc))):
+            page = doc[page_num]
+            batch_text += page.get_text()
+            # Release page resources
+            page = None
+        
+        # Split the batch text into chunks
+        chunks = text_splitter.create_documents([batch_text])
+        all_chunks.extend(chunks)
+        
+        # Explicitly clear batch text to help garbage collector
+        batch_text = None
+        gc.collect()
+    
+    doc.close()
+    return all_chunks
 
 def setup_vector_store():
     """Initialize or load existing vector store with document chunks"""
@@ -76,32 +147,30 @@ def setup_vector_store():
         db = Chroma(
             client=chroma_client,
             collection_name=COLLECTION_NAME,
-            embedding_function=embedding_function
+            embedding_function=get_embedding_function()
         )
         print(f"Existing collection '{COLLECTION_NAME}' loaded")
         return db
-    except:
-        print(f"Creating new collection '{COLLECTION_NAME}'")
-        # Load PDF document
-        loader = PyPDFLoader(PDF_PATH)
-        documents = loader.load()
-
-        # Split text into chunks
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-        chunks = text_splitter.split_documents(documents)
-
+    except Exception as e:
+        print(f"Creating new collection '{COLLECTION_NAME}': {e}")
+        
+        # Process PDF in chunks
+        chunks = chunk_pdf(PDF_PATH)
+        
         # Create new vector store
         db = Chroma.from_documents(
             documents=chunks,
-            embedding=embedding_function,
+            embedding=get_embedding_function(),
             collection_name=COLLECTION_NAME,
             client=chroma_client
         )
         print(f"Added {len(chunks)} chunks to ChromaDB")
+        
+        # Help garbage collector
+        chunks = None
+        gc.collect()
+        
         return db
-
-# Setup vector store
-vector_store = setup_vector_store()
 
 # Define system prompts
 system_prompt = """
@@ -135,6 +204,16 @@ Por favor, realiza un análisis comparativo siguiendo estos puntos:
 Mantén un tono constructivo y educativo, centrándote en el aprendizaje.
 """
 
+# Lazy-loaded vector store
+vector_store = None
+
+def get_vector_store():
+    """Lazy load vector store"""
+    global vector_store
+    if vector_store is None:
+        vector_store = setup_vector_store()
+    return vector_store
+
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     return RedirectResponse("/static/index.html")
@@ -145,17 +224,12 @@ async def init(websocket: WebSocket):
     await websocket.accept()
     print("WebSocket connection accepted")
     
-    # For storing AI responses
-    stored_ai_responses = {}
     current_case_id = None
     
     try:
         print("Waiting for JSON message from client...")
         while True:
             data = await websocket.receive_json()
-            print(f"Message received: {json.dumps(data)}")
-            
-            # Identify action type
             action = data.get("action", "message")
             
             if action == "new_case":
@@ -166,7 +240,7 @@ async def init(websocket: WebSocket):
                 
                 # Generate response but don't send it
                 ai_response = await generate_ai_response(case_text)
-                stored_ai_responses[case_id] = ai_response
+                response_cache.put(case_id, ai_response)
                 
                 # Inform that the case was processed
                 await websocket.send_json({
@@ -174,15 +248,17 @@ async def init(websocket: WebSocket):
                     "case_id": case_id
                 })
                 
+                # Help garbage collector
+                case_text = None
+                gc.collect()
+                
             elif action == "submit_user_response":
                 # User submits their response
                 case_id = data.get("case_id", "default")
                 user_response = data.get("content", "")
                 
-                if case_id in stored_ai_responses:
-                    # Retrieve stored AI response
-                    ai_response = stored_ai_responses[case_id]
-                    
+                ai_response = response_cache.get(case_id)
+                if ai_response:
                     # Send stored AI response
                     await websocket.send_json({
                         "action": "ai_response",
@@ -202,6 +278,10 @@ async def init(websocket: WebSocket):
                         "action": "error",
                         "message": "No AI response found for this case"
                     })
+                
+                # Help garbage collector
+                user_response = None
+                gc.collect()
             
             elif action == "message":
                 # Normal message (for compatibility)
@@ -209,6 +289,11 @@ async def init(websocket: WebSocket):
                 await websocket.send_json({"action": "init_system_response"})
                 response = await process_messages(messages, websocket)
                 await websocket.send_json({"action": "finish_system_response"})
+                
+                # Help garbage collector
+                messages = None
+                response = None
+                gc.collect()
                 
     except WebSocketDisconnect:
         print("Normal WebSocket disconnection")
@@ -227,17 +312,23 @@ async def generate_ai_response(case_text):
     """Generate AI response but don't send it to the user"""
     
     # Query vector store for relevant information
-    docs = vector_store.similarity_search(case_text, k=2)
+    docs = get_vector_store().similarity_search(case_text, k=2)
     context = "\n\n".join([doc.page_content for doc in docs])
     
     # Create prompt
     full_prompt = system_prompt + context
     
     # Generate response with Gemini
-    response = await llm.ainvoke([
+    response = await get_llm().ainvoke([
         {"role": "system", "content": full_prompt},
         {"role": "user", "content": case_text}
     ])
+    
+    # Help garbage collector
+    docs = None
+    context = None
+    full_prompt = None
+    gc.collect()
     
     return response.content
 
@@ -251,10 +342,14 @@ async def generate_comparison(ai_response, user_response):
     )
     
     # Generate comparison with Gemini
-    response = await llm.ainvoke([
+    response = await get_llm().ainvoke([
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": prompt_text}
     ])
+    
+    # Help garbage collector
+    prompt_text = None
+    gc.collect()
     
     return response.content
 
@@ -263,25 +358,44 @@ async def process_messages(messages, websocket):
     
     # Query vector store for relevant information
     user_message = messages[-1]["content"]
-    docs = vector_store.similarity_search(user_message, k=2)
+    docs = get_vector_store().similarity_search(user_message, k=2)
     context = "\n\n".join([doc.page_content for doc in docs])
     
     # Create system message with context
     system_message = {"role": "system", "content": system_prompt + context}
     
-    # Print messages for debugging
-    print(json.dumps([system_message] + messages, indent=4))
-    
-    # Stream responses using Gemini (note: streaming implementation depends on specific SDK version)
-    # This is a simplified version that doesn't actually stream but simulates it with chunks
-    response = await llm.ainvoke([system_message] + messages)
-    
-    # Split response into chunks to simulate streaming
+    # Generate response with Gemini
+    response = await get_llm().ainvoke([system_message] + messages)
     content = response.content
-    chunk_size = 20  # Characters per chunk
-    chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
     
-    for chunk in chunks:
+    # Stream in smaller chunks to avoid memory spikes
+    chunk_size = 20  # Characters per chunk
+    for i in range(0, len(content), chunk_size):
+        chunk = content[i:i+chunk_size]
         await websocket.send_json({"action": "append_system_response", "content": chunk})
     
+    # Help garbage collector
+    docs = None
+    context = None
+    system_message = None
+    gc.collect()
+    
     return content
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources when shutting down"""
+    global vector_store, embedding_function, llm
+    
+    # Clear caches and references
+    vector_store = None
+    embedding_function = None
+    llm = None
+    response_cache.cache.clear()
+    response_cache.order.clear()
+    
+    # Force garbage collection
+    gc.collect()
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
