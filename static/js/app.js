@@ -106,7 +106,7 @@ function submitText() {
 }
 
 function opensocket(url) {
-    socket = new WebSocket("ws://" + location.host + url);
+    socket = new WebSocket("wss://" + location.host + url);
     
     socket.addEventListener("open", (event) => {});
     
